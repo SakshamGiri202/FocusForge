@@ -30,7 +30,7 @@ export function TaskEntry() {
   const [task, setTask] = useState("");
   const [time, setTime] = useState("");
 
-  const canSubmit = task.trim().length > 0 && protagonist.trim().length > 0 && !busy;
+  const canSubmit = task.trim().length > 0 && protagonist.trim().length > 0 && busy === "idle";
 
   const submit = async () => {
     if (!canSubmit) return;
