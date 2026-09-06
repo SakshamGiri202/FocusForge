@@ -9,9 +9,9 @@ from __future__ import annotations
 
 from api.state import AppState
 from storage_interface import TaskStorage
-from storage_stub import InMemoryTaskStorage
+from storage_vectorai import VectorAITaskStorage
 
-_storage: TaskStorage = InMemoryTaskStorage()
+_storage: TaskStorage = VectorAITaskStorage()
 _state = AppState()
 
 
