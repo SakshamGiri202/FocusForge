@@ -8,13 +8,13 @@ def test_all_entries_have_required_shape():
         assert isinstance(task["title"], str) and task["title"]
         assert isinstance(task["description"], str) and task["description"]
         assert isinstance(task["damage_rating"], (int, float))
-        assert 1 <= task["damage_rating"] <= 10
+        assert 6 <= task["damage_rating"] <= 60
 
 
 def test_covers_a_spread_of_damage_tiers():
     ratings = {t["damage_rating"] for t in COMPLETED_TASKS}
-    assert min(ratings) <= 2
-    assert max(ratings) >= 9
+    assert min(ratings) <= 12
+    assert max(ratings) >= 54
 
 
 def test_seed_populates_storage():

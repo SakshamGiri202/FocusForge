@@ -9,6 +9,11 @@ Which backend is live is controlled by the STORAGE_BACKEND env var:
 
 Everything else in api/ depends on storage_interface.TaskStorage, never
 on either concrete class. That's the one-line swap.
+
+Same pattern for the story generator via STORY_BACKEND:
+- "stub" (default) -- no network, deterministic, safe for dev/tests.
+- "gemini" -- real Gemini API. Requires google-generativeai installed
+  AND a GEMINI_API_KEY env var.
 """
 
 from __future__ import annotations
@@ -17,6 +22,7 @@ import os
 
 from api.state import AppState
 from storage_interface import TaskStorage
+from story_generator import StoryGenerator
 
 
 def _build_storage() -> TaskStorage:
@@ -32,8 +38,22 @@ def _build_storage() -> TaskStorage:
     raise ValueError(f"Unknown STORAGE_BACKEND: {backend!r} (expected 'stub' or 'vectorai')")
 
 
+def _build_story_generator() -> StoryGenerator:
+    backend = os.environ.get("STORY_BACKEND", "stub")
+    if backend == "gemini":
+        from story_generator import GeminiStoryGenerator
+
+        return GeminiStoryGenerator()
+    if backend == "stub":
+        from story_generator import StubStoryGenerator
+
+        return StubStoryGenerator()
+    raise ValueError(f"Unknown STORY_BACKEND: {backend!r} (expected 'stub' or 'gemini')")
+
+
 _storage: TaskStorage = _build_storage()
 _state = AppState()
+_story_generator: StoryGenerator = _build_story_generator()
 
 
 def get_storage() -> TaskStorage:
@@ -42,3 +62,7 @@ def get_storage() -> TaskStorage:
 
 def get_state() -> AppState:
     return _state
+
+
+def get_story_generator() -> StoryGenerator:
+    return _story_generator
