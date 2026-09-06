@@ -3,6 +3,11 @@
 
 export const BOSS_HP = 100;
 
+// Duel tuning (backend-tunable constant; mirror in localEngine + DuelPanel tween).
+// Every hero's 100-scale HP loses 1 point per tick while a duel is active.
+// ~1 HP / 40s → an idle hero reaches ~45 by a 30-minute bell; quests decide the fight.
+export const DUEL_DRAIN_TICK_MS = 40_000;
+
 export type Difficulty = "trivial" | "easy" | "medium" | "hard" | "epic";
 
 export interface Quest {
@@ -98,6 +103,9 @@ export interface JournalEntry {
   closingProse: string;
   createdAt: string;
   completedAt: string;
+  mode?: "solo" | "duel";
+  rival?: string; // duel-only: the opponent's hero name
+  result?: "win" | "loss" | "draw"; // duel-only
 }
 
 export interface CreateChapterInput {
@@ -109,6 +117,7 @@ export interface CreateChapterInput {
 export interface CompleteQuestResult {
   state: SessionState;
   goblin: SideQuestPrompt | null;
+  match?: MatchState; // present when this strike happened inside a duel
 }
 
 export type GoblinChoice = "sideQuest" | "goblin";
@@ -116,3 +125,49 @@ export type GoblinChoice = "sideQuest" | "goblin";
 export type SyncState = "idle" | "syncing" | "online" | "offline" | "error";
 
 export type BackendMode = "rest" | "mock";
+
+// ---- Duel mode (CONTRACT.md §3.1 addendum, v3) ----
+
+export type DuelStatus = "awaiting" | "active" | "over";
+export type DuelWinner = "A" | "B" | "draw" | null;
+export type DuelEndReason = "kill" | "time" | null;
+
+export interface DuelSide {
+  sessionId: string;
+  heroName: string;
+  task: string;
+  timeAvailable: string;
+  strikes: number;
+}
+
+export type MatchBeatKind = "start" | "strike" | "kill" | "time" | "join";
+
+export interface MatchBeat {
+  id: string;
+  kind: MatchBeatKind;
+  side: "A" | "B";
+  text: string;
+  at: string;
+}
+
+/** The live duel. HP is DERIVED (never stored per second):
+ *  hpA = 100 − drain(now) − damageDealtB, hpB = 100 − drain(now) − damageDealtA.
+ *  Backend returns hpA/hpB fresh on every read/event; clients tween from
+ *  startedAt/endsAt + damageDealtX. */
+export interface MatchState {
+  matchId: string;
+  joinCode: string; // short code the rival types / a shareable link carries
+  status: DuelStatus;
+  winner: DuelWinner;
+  endReason: DuelEndReason;
+  durationSeconds: number; // shared time budget, set by the summoner
+  startedAt: string | null; // null until the rival joins — the clock only starts then
+  endsAt: string | null;
+  sideA: DuelSide | null;
+  sideB: DuelSide | null;
+  hpA: number; // fresh value at this snapshot (0..100)
+  hpB: number;
+  damageDealtA: number; // Σ damage of A's completed quests (hurts B)
+  damageDealtB: number; // Σ damage of B's completed quests (hurts A)
+  log: MatchBeat[];
+}

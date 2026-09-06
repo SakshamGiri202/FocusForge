@@ -7,16 +7,25 @@
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import { api } from "./api";
-import type {
+
+// In mock mode the match doc lives in shared localStorage ("focusforge-matches")
+// so two tabs of the same browser can duel via storage events. The per-user cache
+// must NOT also live there, or the two tabs would clobber each other's player state.
+// So mock keeps each tab's cache in sessionStorage; REST is per-user persistent.
+const cacheStorage = () => {
+  if (typeof window === "undefined") return undefined;
+  return api.mode === "mock" ? window.sessionStorage : window.localStorage;
+};import type {
   CreateChapterInput,
   CompleteQuestResult,
   GoblinChoice,
   JournalEntry,
+  MatchState,
   SessionState,
   SideQuestPrompt,
   SyncState,
 } from "./contract";
-import { synthesizeJournal } from "./localEngine";
+import { synthesizeDuelJournal, synthesizeJournal } from "./localEngine";
 
 interface GameState {
   session: SessionState | null;
@@ -25,6 +34,9 @@ interface GameState {
   sync: SyncState;
   busy: "idle" | "seeding" | "acting";
   error: string | null;
+
+  match: MatchState | null;
+  duelRole: "A" | "B" | null;
 
   setSession: (s: SessionState | null) => void;
   setGoblin: (g: SideQuestPrompt | null) => void;
@@ -40,6 +52,11 @@ interface GameState {
   shrink: (questId: string, token?: string) => Promise<void>;
   reconjure: (token?: string) => Promise<void>;
   beginNextChapter: (token?: string) => Promise<void>;
+
+  createDuel: (input: CreateChapterInput, token?: string) => Promise<void>;
+  joinDuel: (joinCode: string, input: CreateChapterInput, token?: string) => Promise<void>;
+  subscribeDuel: (matchId: string) => () => void;
+  leaveDuel: () => void;
 }
 
 function ingest(state: GameState, result: SessionState | CompleteQuestResult, goblin?: SideQuestPrompt | null): Partial<GameState> {
@@ -53,6 +70,25 @@ function ingest(state: GameState, result: SessionState | CompleteQuestResult, go
   return { session: s, goblin: g, journal, error: null, busy: "idle", sync: api.mode === "mock" ? "online" : (state.sync === "error" ? "online" : state.sync) };
 }
 
+function withMatch(match: MatchState | undefined): Partial<GameState> {
+  if (!match) return {};
+  const st = useGame.getState();
+  const mySessionId = st.session?.sessionId;
+  let duelRole: "A" | "B" | null = st.duelRole;
+  if (mySessionId) {
+    if (match.sideA?.sessionId === mySessionId) duelRole = "A";
+    else if (match.sideB?.sessionId === mySessionId) duelRole = "B";
+  }
+  const patch: Partial<GameState> = { match, ...(duelRole ? { duelRole } : {}) };
+  if (match.status === "over" && duelRole && mySessionId) {
+    const known = st.journal.some((j) => j.mode === "duel" && j.sessionId === mySessionId);
+    if (!known) {
+      patch.journal = [synthesizeDuelJournal(match, duelRole), ...st.journal];
+    }
+  }
+  return patch;
+}
+
 export const useGame = create<GameState>()(
   persist(
     (set, get) => ({
@@ -62,6 +98,8 @@ export const useGame = create<GameState>()(
       sync: "idle",
       busy: "idle",
       error: null,
+      match: null,
+      duelRole: null,
 
       setSession: (s) => set({ session: s, error: null }),
       setGoblin: (g) => set({ goblin: g }),
@@ -99,7 +137,7 @@ export const useGame = create<GameState>()(
         set({ busy: "acting", error: null });
         try {
           const result = await api.completeQuest(s.sessionId, questId, s, token);
-          set(ingest(get(), result));
+          set({ ...ingest(get(), result), ...withMatch("match" in result ? result.match : undefined) });
         } catch (e) {
           set({ busy: "idle", error: (e as Error).message });
         }
@@ -169,14 +207,43 @@ export const useGame = create<GameState>()(
           set({ busy: "idle", error: (e as Error).message });
         }
       },
+
+      createDuel: async (input, token) => {
+        set({ busy: "seeding", error: null, match: null, duelRole: null });
+        try {
+          const { match, session } = await api.createDuel(input, token);
+          const role = session.sessionId === match.sideA?.sessionId ? "A" : session.sessionId === match.sideB?.sessionId ? "B" : null;
+          set({ session, match, duelRole: role, error: null, busy: "idle" });
+        } catch (e) {
+          set({ busy: "idle", error: (e as Error).message });
+        }
+      },
+
+      joinDuel: async (joinCode, input, token) => {
+        set({ busy: "seeding", error: null, match: null, duelRole: null });
+        try {
+          const { match, session } = await api.joinDuel(joinCode, input, token);
+          const role = session.sessionId === match.sideA?.sessionId ? "A" : session.sessionId === match.sideB?.sessionId ? "B" : null;
+          set({ session, match, duelRole: role, error: null, busy: "idle" });
+        } catch (e) {
+          set({ busy: "idle", error: (e as Error).message });
+        }
+      },
+
+      subscribeDuel: (matchId) =>
+        api.subscribeDuel(matchId, (m) => set(withMatch(m))),
+
+      leaveDuel: () => set({ match: null, duelRole: null }),
     }),
     {
       name: "focusforge-cache",
-      storage: createJSONStorage(() => localStorage),
+      storage: createJSONStorage(cacheStorage as () => Storage),
       partialize: (st) => ({
         session: st.session,
         goblin: st.goblin,
         journal: st.journal,
+        match: st.match,
+        duelRole: st.duelRole,
       }),
     },
   ),

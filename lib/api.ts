@@ -10,11 +10,17 @@ import type {
   CreateChapterInput,
   GoblinChoice,
   JournalEntry,
+  MatchState,
   SessionState,
 } from "./contract";
 import * as engine from "./localEngine";
 
 const MOCK_USER = "demo-hero";
+
+export interface DuelOutcome {
+  match: MatchState;
+  session: SessionState;
+}
 
 function resolveMode(): BackendMode {
   const url = process.env.NEXT_PUBLIC_API_URL;
@@ -74,6 +80,11 @@ export interface API {
   shrinkQuest(sessionId: string, questId: string, current: SessionState, token?: string): Promise<SessionState>;
   reconjure(sessionId: string, current: SessionState, token?: string): Promise<SessionState>;
   getJournal(token?: string): Promise<JournalEntry[]>;
+
+  createDuel(input: CreateChapterInput, token?: string): Promise<DuelOutcome>;
+  joinDuel(joinCode: string, input: CreateChapterInput, token?: string): Promise<DuelOutcome>;
+  getDuel(matchId: string, token?: string): Promise<MatchState>;
+  subscribeDuel(matchId: string, onMatch: (m: MatchState) => void): () => void;
 }
 
 const restApi: API = {
@@ -92,6 +103,25 @@ const restApi: API = {
   reconjure: (sessionId, _current, token) =>
     request<SessionState>(`/api/chapters/${sessionId}/reconjure`, { method: "POST", body: "{}" }, token),
   getJournal: (token) => request<JournalEntry[]>(`/api/journal`, {}, token),
+
+  createDuel: (input, token) =>
+    request<DuelOutcome>(`/api/duels`, { method: "POST", body: JSON.stringify(input) }, token),
+  joinDuel: (joinCode, input, token) =>
+    request<DuelOutcome>(`/api/duels/${joinCode}/join`, { method: "POST", body: JSON.stringify(input) }, token),
+  getDuel: (matchId, token) => request<MatchState>(`/api/duels/${matchId}`, {}, token),
+  subscribeDuel: (matchId, onMatch) => {
+    const es = new EventSource(`${BASE}/api/duels/${matchId}/events`);
+    const handler = (e: MessageEvent) => {
+      try {
+        const msg = JSON.parse(e.data) as { match?: MatchState };
+        if (msg.match) onMatch(msg.match);
+      } catch {
+        /* ignore malformed frames */
+      }
+    };
+    es.addEventListener("message", handler);
+    return () => es.close();
+  },
 };
 
 const mockApi: API = {
@@ -103,9 +133,17 @@ const mockApi: API = {
     throw new ApiError("NOT_FOUND", "No such chapter", 404);
   },
   completeQuest: async (sessionId, questId, current) => {
-    const out = engine.applyStrike(current, questId);
-    remember(sessionId, out.state);
-    return out;
+    const duel = engine.findMatchBySession(sessionId);
+    if (duel) {
+      const out = engine.applyDuelStrike(current, questId);
+      if (out.state !== current) {
+        remember(sessionId, out.state);
+        return { state: out.state, goblin: null, match: out.match ?? undefined };
+      }
+    }
+    const result = engine.applyStrike(current, questId);
+    remember(sessionId, result.state);
+    return result;
   },
   resolveInterlude: async (sessionId, interludeId, current, choice) => {
     const state = engine.resolveInterlude(current, interludeId, choice);
@@ -128,6 +166,32 @@ const mockApi: API = {
     return state;
   },
   getJournal: async () => [],
+
+  createDuel: async (input) => engine.startDuel(input),
+  joinDuel: async (joinCode, input) => engine.joinDuel(joinCode, input),
+  getDuel: async (matchId) => engine.getDuel(matchId),
+  subscribeDuel: (matchId, onMatch) => {
+    let alive = true;
+    const push = () => {
+      if (!alive) return;
+      try {
+        onMatch(engine.getDuel(matchId));
+      } catch {
+        /* match gone — the subscription is done */
+      }
+    };
+    push();
+    const interval = window.setInterval(push, 1000);
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === "focusforge-matches") push();
+    };
+    window.addEventListener("storage", onStorage);
+    return () => {
+      alive = false;
+      window.clearInterval(interval);
+      window.removeEventListener("storage", onStorage);
+    };
+  },
 };
 
 declare global {

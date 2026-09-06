@@ -1,8 +1,12 @@
-# FocusForge — Integration Contract (v2)
+# FocusForge — Integration Contract (v3)
 
 > **THE one contract file.** Written first, updated last.
 > If you change a field name, a route, or a data shape: announce it in the
 > group chat BEFORE you commit. No silent drift.
+
+**v3 (duel mode).** Adds `MatchState` (§2.8), your 3 duel endpoints + the SSE events
+channel (§3.1), the `duels` collection (§4), and a duel carve-out to the goblin rule
+(§2.4: the Goblin does NOT interrupt a duel — see §3.1.3). The solo flow is unchanged.
 
 Owners:
 - **UI (frontend)** — Next.js app, consumes the REST API below. Never touches the DB.
@@ -208,9 +212,66 @@ locked). Example: `q3 "Write the conclusion" damage 40` →
   "detoursTaken": 1,
   "closingProse": "The mountain crumbled; the hero marches on.",
   "createdAt": "2026-09-06T11:30:00Z",
-  "completedAt": "2026-09-06T11:30:00Z"
+  "completedAt": "2026-09-06T11:30:00Z",
+  // v3 — duel-only fields:
+  "mode": "duel",              // "solo" (default) | "duel"
+  "rival": "Rhea",             // the opponent's hero name
+  "result": "win"              // "win" | "loss" | "draw" (from THIS hero's viewpoint)
 }
 ```
+
+(For a duel, `chapter: { number: 1, title: "A Duel of Honest Work" }`, `bossName` = the
+rival's name, and `closingProse` narrates victory/defeat/draw. Both sides write their own
+journal entry from their own viewpoint — same `matchId`, different `sessionId`.)
+
+### 2.8 Duel mode — MatchState (v3)
+
+Two players, one shared hourglass. Each names their own quest; **the shared time budget is
+the summoner's choice** and the clock starts only when the rival joins. Each completed quest
+deals its `damage` **to the OPPONENT** (A's strikes subtract from `hpB`, B's from `hpA`). The
+first to reach 0 HP falls; if the hourglass runs out first, the higher HP wins (tie = draw).
+
+**HP is DERIVED, never stored per second:**
+```
+hpA = max(0, 100 − drain(now) − damageDealtB)
+hpB = max(0, 100 − drain(now) − damageDealtA)
+drain(now) = floor(elapsedMs(startedAt, now) / DUEL_DRAIN_TICK_MS)   // DUEL_DRAIN_TICK_MS = 40_000
+```
+
+```jsonc
+{
+  "matchId": "uuid-v4",
+  "joinCode": "HXTX3M",        // 6 chars, A..Z (no I/O) + 2..9; also carried in the share link
+  "status": "awaiting",        // "awaiting" | "active" | "over"
+  "winner": null,              // "A" | "B" | "draw" | null
+  "endReason": null,           // "kill" | "time" | null
+  "durationSeconds": 1800,     // shared budget = timeChoiceToSeconds(summoner's choice)
+  "startedAt": null,           // null until the rival joins; only THEN does the clock turn
+  "endsAt": null,              // startedAt + durationSeconds once active
+  "sideA": { "sessionId": "…", "heroName": "Piyush", "task": "…", "timeAvailable": "30 minutes", "strikes": 2 },
+  "sideB": null,               // null until joined
+  "hpA": 82,                   // fresh derived value at this snapshot (0..100)
+  "hpB": 100,
+  "damageDealtA": 18,          // Σ damage of A's completed quests (hurts B)
+  "damageDealtB": 0,           // Σ damage of B's completed quests (hurts A)
+  "log": [
+    { "id": "mb_001", "kind": "start",  "side": "A", "at": "…ISO…", "text": "Piyush stands before their work, demanding a rival be summoned." },
+    { "id": "mb_002", "kind": "join",   "side": "B", "at": "…ISO…", "text": "Rhea answers the summons. The hourglass turns — the duel is sealed." },
+    { "id": "mb_003", "kind": "strike", "side": "A", "at": "…ISO…", "text": "Piyush struck — \"Open the file\" — 18 stones crashed against Rhea." },
+    { "id": "mb_004", "kind": "kill",   "side": "A", "at": "…ISO…", "text": "Piyush stands; the other lies among the stones." }
+  ]
+}
+```
+`log[].kind` enum: `"start" | "join" | "strike" | "kill" | "time"`.
+
+**Time budget mapping** (must be mirrored by the backend — see `lib/time.ts`):
+`"15 minutes"→15m · "30 minutes"→30m · "45 minutes"→45m · "1 hour"→1h · "2 hours"→2h ·
+"3 hours"→3h · "An evening"→2h · "A full day"→24h · "no bound set"→1h (default)`.
+
+**Share flow:** A summons → match is `awaiting` (no clock) with a `joinCode`. B either types
+the code or opens `/duel/join?code=<joinCode>`. On B's join the match flips to `active` and
+`startedAt`/`endsAt` are set. Each side's quests come from their own Chapter session
+(`SessionState`), which the backend already owns; the match references them via `sideX.sessionId`.
 
 ---
 
@@ -227,6 +288,24 @@ locked). Example: `q3 "Write the conclusion" damage 40` →
 | `POST` | `/api/chapters/:id/reconjure` | `{}` | `SessionState` — same task, brand new seed (temperature ~1.0) |
 | `GET` | `/api/journal` | — | `JournalEntry[]` (newest first) — user's archive |
 
+### 3.1 Duel endpoints (v3)
+
+| Method | Path | Body | Returns |
+|---|---|---|---|
+| `POST` | `/api/duels` | `CreateChapterInput` (summoner) | `{ "match": MatchState, "session": SessionState }` (201) — creates the match (`awaiting`) + the summoner's own Chapter session |
+| `POST` | `/api/duels/:joinCode/join` | `CreateChapterInput` (rival) | `{ "match": MatchState, "session": SessionState }` — starts the clock; 409 if already active/booked |
+| `GET` | `/api/duels/:matchId` | — | `MatchState` (200) — fresh derived hpA/hpB; 404 if not one of the two sides |
+| `GET` | `/api/duels/:matchId/events` | — | **Server-Sent Events** stream: `data: {"match": MatchState}\n\n` pushed on every mutation, plus on an interval (~1s) while the duel is `active` (drain tick). Closes when the match ends or the client disconnects. |
+
+- In a duel the strike endpoint is **the same** `PATCH /api/chapters/:id/quests/:questId`
+  (each side strikes their own quest). When the current session belongs to a match, the PATCH
+  response includes `"match": MatchState` alongside `state`, and the backend applies the damage
+  to the opponent, appends a `strike` beat, re-evaluates end conditions, and persists + emits.
+- **3.1.3 — goblin carve-out:** the Goblin interlude (2.4, fires after the 2nd strike) is
+  **disabled while a strike touches a duel**. A completed quest in a duel must return
+  `"goblin": null` and keep `status: "battle"`. Duels are a clean eyes-on-the-hill sprint;
+  the distraction returns the moment the duel is over.
+
 ### Body echo rule
 `protagonist`, `task`, `timeAvailable` are set by the frontend on CREATE and echoed verbatim.
 
@@ -235,6 +314,9 @@ locked). Example: `q3 "Write the conclusion" damage 40` →
 - Frontend keeps a localStorage cache, but it's a CACHE, never the source of truth.
 - On boot/focus: `GET /api/chapters/:id`; if `server.version > cache.version`, server wins.
 - Journal entries are idempotent (`journalId`).
+- **Duels:** the frontend never caches `MatchState` as truth — the `/events` SSE stream is the
+  live source while `active`, and `GET /api/duels/:matchId` is re-fetched on boot. `version` is
+  not used for matches (the stream is authoritative).
 
 ---
 
@@ -246,6 +328,12 @@ on every write.
 
 **Collection/table `journal`** — key `journalId`, indexed `userId` + `createdAt`:
 one document = one `JournalEntry`.
+
+**Collection/table `duels`** — key `matchId`, indexed `joinCode` (unique) + `status`:
+one document = one `MatchState`. `sideA.sessionId` / `sideB.sessionId` join to the `chapters`
+collection. Writes: on create, join, each strike, and each persisted status transition
+(`awaiting → active → over`). Never store per-second HP; derive it from
+`startedAt`/`endsAt`/`damageDealtA`/`damageDealtB` on read (2.8).
 
 Field names identical to the shapes above. Don't rename `id`→`_id`, `sessionId`→`_key`, etc.
 Silent renames are the #1 integration killer.
@@ -278,3 +366,7 @@ Silent renames are the #1 integration killer.
 > 1 user enters task → 2 chapter generated → 3 story types itself → 4 4–6 micro-quests →
 > 5 complete a quest → 6 boss HP visibly drops & prose changes → 7 goblin interrupts ONCE →
 > 8 choice (detour xor return) → 9 final quest → 10 Journal entry. Everything else is secondary.
+
+**Optional duel demo (v3):** A summons a rival → shares `/duel/join?code=…` → rival joins →
+both see dual HP bars + shared countdown → each strike drops the OTHER's bar → first to 0 (or
+time-up, higher HP wins, tie = draw) → result narrated + written to both journals.

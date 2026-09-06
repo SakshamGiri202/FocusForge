@@ -24,19 +24,32 @@ export function ArchiveList({ entries }: { entries: JournalEntry[] }) {
           <SceneDivider />
           <div className="mt-2">
             <p className="hand text-xs uppercase tracking-[0.3em] text-gold-500">
-              Chapter {e.chapter.number} · {new Date(e.completedAt).toLocaleDateString("en-US", { month: "long", day: "numeric" })}
+              {e.mode === "duel" ? "Duel" : `Chapter ${e.chapter.number}`}
+              <span aria-hidden> · </span>
+              {new Date(e.completedAt).toLocaleDateString("en-US", { month: "long", day: "numeric" })}
             </p>
             <h2 className="font-display mt-2 text-2xl text-parchment">{e.chapter.title}</h2>
             <p className="hand mt-1 text-sm text-parchment-dim italic">
               “{e.closingProse}”
             </p>
-            <p className="mt-4 text-sm leading-relaxed text-parchment-soft">
-              In which <span className="text-gold-200">{e.task}</span>
-              {e.timeAvailable && e.timeAvailable !== "no bound set" ? ` was done within ${e.timeAvailable}` : " was done"}.
-              The {e.bossName} fell after {e.strikesUsed} blow{e.strikesUsed === 1 ? "" : "s"}
-              {e.goblinsFallen > 0 ? `; the Goblin was exposed ${e.goblinsFallen} time${e.goblinsFallen === 1 ? "" : "s"}` : ""}
-              {e.detoursTaken > 0 ? `; ${e.detoursTaken} detour${e.detoursTaken === 1 ? "" : "s"} walked and finished` : ""}.
-            </p>
+            {e.mode === "duel" ? (
+              <p className="mt-4 text-sm leading-relaxed text-parchment-soft">
+                A duel of honest work against <span className="text-gold-200">{e.rival ?? "a rival"}</span>.
+                <span className={e.result === "win" ? "text-moss-300" : e.result === "loss" ? "text-blood-300" : "text-parchment-dim"}>
+                  {" "}
+                  {e.result === "win" ? "A victory." : e.result === "loss" ? "A fall — but the work was done." : "A draw."}
+                </span>{" "}
+                {e.strikesUsed} blow{e.strikesUsed === 1 ? "" : "s"} landed.
+              </p>
+            ) : (
+              <p className="mt-4 text-sm leading-relaxed text-parchment-soft">
+                In which <span className="text-gold-200">{e.task}</span>
+                {e.timeAvailable && e.timeAvailable !== "no bound set" ? ` was done within ${e.timeAvailable}` : " was done"}.
+                The {e.bossName} fell after {e.strikesUsed} blow{e.strikesUsed === 1 ? "" : "s"}
+                {e.goblinsFallen > 0 ? `; the Goblin was exposed ${e.goblinsFallen} time${e.goblinsFallen === 1 ? "" : "s"}` : ""}
+                {e.detoursTaken > 0 ? `; ${e.detoursTaken} detour${e.detoursTaken === 1 ? "" : "s"} walked and finished` : ""}.
+              </p>
+            )}
             {i === 0 && (
               <p className="hand mt-3 inline-block rounded-full border border-gold-600/40 px-3 py-1 text-xs text-gold-300">
                 ⟡ most recent chapter

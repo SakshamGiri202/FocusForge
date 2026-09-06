@@ -5,10 +5,13 @@
 
 import {
   BOSS_HP,
+  DUEL_DRAIN_TICK_MS,
   type CreateChapterInput,
   type Difficulty,
   type GoblinChoice,
   type JournalEntry,
+  type MatchBeat,
+  type MatchState,
   type Quest,
   type SessionState,
   type SideQuest,
@@ -17,6 +20,7 @@ import {
   type StoryBeatKind,
   type StorySeed,
 } from "./contract";
+import { timeChoiceToSeconds } from "./time";
 
 const WEIGHTS: Record<Difficulty, number> = {
   trivial: 6,
@@ -422,5 +426,271 @@ export function synthesizeJournal(state: SessionState): JournalEntry {
     closingProse: state.rewardLines.onBossDown,
     createdAt: state.createdAt,
     completedAt: nowISO(),
+    mode: "solo",
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Duel mode (CONTRACT v3). Cross-tab demo without a backend: matches live in
+// localStorage ("focusforge-matches") so two tabs of the same browser can duel.
+// HP is DERIVED from startedAt/endsAt + damageDealtX — never stored per second.
+// ---------------------------------------------------------------------------
+
+const MATCH_DOC_KEY = "focusforge-matches";
+
+function isBrowser(): boolean {
+  return typeof window !== "undefined" && !!window.localStorage;
+}
+
+/** 6-char join code from an unambiguous alphabet. */
+function genJoinCode(): string {
+  const alphabet = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
+  const bytes = new Uint8Array(6);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (b) => alphabet[b % alphabet.length]).join("");
+}
+
+function loadMatchDoc(): Record<string, MatchState> {
+  try {
+    if (!isBrowser()) return {};
+    const raw = window.localStorage.getItem(MATCH_DOC_KEY);
+    return raw ? (JSON.parse(raw) as Record<string, MatchState>) : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveMatchDoc(doc: Record<string, MatchState>) {
+  if (!isBrowser()) return;
+  try {
+    window.localStorage.setItem(MATCH_DOC_KEY, JSON.stringify(doc));
+  } catch {
+    /* storage full / private mode — duel sync degrades to this tab only */
+  }
+}
+
+export function duelElapsedMs(nowMs: number, startedAt: string | null, endsAt: string | null): number {
+  if (!startedAt) return 0;
+  const s = new Date(startedAt).getTime();
+  const e = endsAt ? new Date(endsAt).getTime() : Infinity;
+  return Math.max(0, Math.min(nowMs, e) - s);
+}
+
+export function duelDrain(nowMs: number, startedAt: string | null, endsAt: string | null): number {
+  return Math.floor(duelElapsedMs(nowMs, startedAt, endsAt) / DUEL_DRAIN_TICK_MS);
+}
+
+/** Evaluate the match at `nowMs`, deriving hpA/hpB and any end conditions. */
+export function evalMatch(m: MatchState, nowMs: number): MatchState {
+  const drain = duelDrain(nowMs, m.startedAt, m.endsAt);
+  const hpA = Math.max(0, 100 - drain - m.damageDealtB);
+  const hpB = Math.max(0, 100 - drain - m.damageDealtA);
+
+  let status = m.status;
+  let winner = m.winner;
+  let endReason = m.endReason;
+
+  if (status === "active") {
+    if (hpA <= 0 || hpB <= 0) {
+      status = "over";
+      endReason = "kill";
+      winner = hpA === hpB ? "draw" : hpA > hpB ? "A" : "B";
+    } else if (m.endsAt && nowMs >= new Date(m.endsAt).getTime()) {
+      status = "over";
+      endReason = "time";
+      winner = hpA === hpB ? "draw" : hpA > hpB ? "A" : "B";
+    }
+  }
+
+  return { ...m, status, winner, endReason, hpA, hpB };
+}
+
+function matchBeat(m: MatchState, kind: MatchBeat["kind"], side: "A" | "B", text: string): MatchBeat {
+  return { id: uid("mb"), kind, side, text, at: nowISO() };
+}
+
+function freshMatch(input: CreateChapterInput, sideA: MatchState["sideA"]): MatchState {
+  const durationSeconds = timeChoiceToSeconds(input.timeAvailable);
+  return {
+    matchId: uid("mch"),
+    joinCode: genJoinCode(),
+    status: "awaiting",
+    winner: null,
+    endReason: null,
+    durationSeconds,
+    startedAt: null,
+    endsAt: null,
+    sideA,
+    sideB: null,
+    hpA: 100,
+    hpB: 100,
+    damageDealtA: 0,
+    damageDealtB: 0,
+    log: [],
+  };
+}
+
+export interface DuelOutcome {
+  match: MatchState;
+  session: SessionState;
+}
+
+/** Player A summons the duel: creates the match (awaiting) and their own chapter. */
+export function startDuel(input: CreateChapterInput, opts?: { chapterNumber?: number; seed?: number }): DuelOutcome {
+  const session = startSession(input, opts);
+  const sideA = {
+    sessionId: session.sessionId,
+    heroName: input.protagonist,
+    task: input.task,
+    timeAvailable: input.timeAvailable || "no bound set",
+    strikes: 0,
+  };
+  const match = freshMatch(input, sideA);
+  match.log.push(
+    matchBeat(match, "start", "A", `${sideA.heroName} stands before their work, demanding a rival be summoned.`),
+  );
+
+  const doc = loadMatchDoc();
+  doc[match.matchId] = match;
+  saveMatchDoc(doc);
+  return { match, session };
+}
+
+/** Player B joins by code; the shared clock starts the moment the duel is sealed. */
+export function joinDuel(joinCode: string, input: CreateChapterInput): DuelOutcome {
+  const doc = loadMatchDoc();
+  const match = Object.values(doc).find((m) => m.joinCode === joinCode);
+  if (!match) throw new Error(`No summon bears the code “${joinCode}”.`);
+
+  if (match.status !== "awaiting") {
+    const taken = match.status === "active" ? "already begun" : "already decided";
+    throw new Error(`That duel has ${taken}.`);
+  }
+  if (match.sideB) throw new Error("That duel already has its rival.");
+
+  const session = startSession(input);
+  match.sideB = {
+    sessionId: session.sessionId,
+    heroName: input.protagonist,
+    task: input.task,
+    timeAvailable: input.timeAvailable || "no bound set",
+    strikes: 0,
+  };
+  match.status = "active";
+  match.startedAt = nowISO();
+  match.endsAt = new Date(new Date(match.startedAt).getTime() + match.durationSeconds * 1000).toISOString();
+  match.log.push(
+    matchBeat(match, "join", "B", `${input.protagonist} answers the summons. The hourglass turns — the duel is sealed.`),
+  );
+
+  const evaled = evalMatch(match, Date.now());
+  doc[evaled.matchId] = evaled;
+  saveMatchDoc(doc);
+  return { match: evaled, session };
+}
+
+export function getDuel(matchId: string, now?: number): MatchState {
+  const m = loadMatchDoc()[matchId];
+  if (!m) throw new Error("No such duel.");
+  const evaled = evalMatch(m, now ?? Date.now());
+  if (evaled.status !== m.status) {
+    const doc = loadMatchDoc();
+    doc[evaled.matchId] = evaled;
+    saveMatchDoc(doc);
+  }
+  return evaled;
+}
+
+export function findMatchBySession(sessionId: string): MatchState | null {
+  const doc = loadMatchDoc();
+  for (const m of Object.values(doc)) {
+    if (m.sideA?.sessionId === sessionId || m.sideB?.sessionId === sessionId) return m;
+  }
+  return null;
+}
+
+export function duelSideOf(match: MatchState, sessionId: string): "A" | "B" | null {
+  if (match.sideA?.sessionId === sessionId) return "A";
+  if (match.sideB?.sessionId === sessionId) return "B";
+  return null;
+}
+
+/** Complete a quest inside a duel: marks own quest done, deals its damage to the rival. */
+export function applyDuelStrike(
+  current: SessionState,
+  questId: string,
+): { state: SessionState; match: MatchState | null; damage: number } {
+  const match = findMatchBySession(current.sessionId);
+  if (!match) return { state: current, match: null, damage: 0 };
+  const side = duelSideOf(match, current.sessionId);
+  if (!side) return { state: current, match: null, damage: 0 };
+  const owned = evalMatch(match, Date.now());
+  if (owned.status !== "active") return { state: current, match: owned, damage: 0 };
+
+  const state = clone(current);
+  const q = state.quests.find((x) => x.id === questId);
+  if (!q || q.done || state.status !== "battle") return { state: current, match: owned, damage: 0 };
+
+  q.done = true;
+  q.completedAt = nowISO();
+  state.strikes += 1;
+  state.bossHp = bossHpOf(state);
+  state.storyLog.push(beat("strike", `${q.emoji} ${q.action} — ${q.narrative}`));
+  state.storyLog.push(beat("reward", pickReward(state, state.strikes === 1)));
+
+  const nowMs = Date.now();
+  const updated = evalMatch(match, nowMs);
+  if (side === "A") updated.damageDealtA += q.damage;
+  else updated.damageDealtB += q.damage;
+  const sideRef = side === "A" ? updated.sideA : updated.sideB;
+  if (sideRef) sideRef.strikes += 1;
+  const rival = side === "A" ? updated.sideB : updated.sideA;
+
+  updated.log.push(
+    matchBeat(
+      updated,
+      "strike",
+      side,
+      `${updated[side === "A" ? "sideA" : "sideB"]?.heroName} struck — "${q.action}" — ${q.damage} stones crashed against ${
+        rival ? rival.heroName : "the rival"
+      }.`,
+    ),
+  );
+
+  const evaled = evalMatch(updated, nowMs);
+  if (evaled.status === "over" && evaled.endReason === "kill") {
+    const winnerName =
+      evaled.winner === "draw" ? "None" : evaled.sideA && evaled.winner === "A" ? evaled.sideA.heroName : evaled.sideB?.heroName ?? "?";
+    evaled.log.push(matchBeat(evaled, "kill", side, `${winnerName} stands; the other lies among the stones.`));
+  }
+
+  const doc = loadMatchDoc();
+  doc[evaled.matchId] = evaled;
+  saveMatchDoc(doc);
+
+  return { state, match: evaled, damage: q.damage };
+}
+
+export function synthesizeDuelJournal(match: MatchState, side: "A" | "B"): JournalEntry {
+  const mine = side === "A" ? match.sideA : match.sideB;
+  const rival = side === "A" ? match.sideB : match.sideA;
+  const result = match.winner === "draw" ? "draw" : match.winner === side ? "win" : "loss";
+  const closing = result === "win" ? "The rival lies still; the work stands done." : result === "loss" ? "The rival struck truer this bell." : "The hourglass ran level — neither could outlast the other.";
+  return {
+    journalId: uid("jr"),
+    sessionId: mine?.sessionId ?? `duel-${match.matchId}`,
+    chapter: { number: 1, title: "A Duel of Honest Work" },
+    task: mine?.task ?? "The shared duel",
+    timeAvailable: mine?.timeAvailable ?? `${match.durationSeconds}s`,
+    bossName: rival?.heroName ?? "A rival",
+    strikesUsed: mine?.strikes ?? 0,
+    goblinsFallen: 0,
+    detoursTaken: 0,
+    closingProse: closing,
+    createdAt: match.startedAt ?? nowISO(),
+    completedAt: match.endsAt ?? nowISO(),
+    mode: "duel",
+    rival: rival?.heroName,
+    result,
   };
 }
