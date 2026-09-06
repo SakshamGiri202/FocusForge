@@ -37,7 +37,21 @@ class TaskStorage(Protocol):
         ...
 
     def count_vectors(self) -> int:
-        """Number of vectors currently indexed in completed_tasks.
-        Used for health checks / cold-start detection.
-        """
+        """Number of vectors currently indexed in completed_tasks."""
+        ...
+
+    def save_chapter(self, session_id: str, chapter_data: dict) -> None:
+        """Upsert chapter data keyed by session_id."""
+        ...
+
+    def get_chapter(self, session_id: str) -> dict:
+        """Retrieve chapter data by session_id."""
+        ...
+
+    def save_journal(self, journal_id: str, journal_data: dict) -> None:
+        """Upsert journal data keyed by journalId."""
+        ...
+
+    def get_journal(self, journal_id: str) -> dict:
+        """Retrieve journal data by journalId."""
         ...

@@ -1,7 +1,6 @@
-"""Implementation of TaskStorage using Actian VectorAI DB."""
-
 import logging
 import time
+import uuid
 import torch
 from sentence_transformers import SentenceTransformer
 # Assuming standard VectorAI SDK import
@@ -10,15 +9,6 @@ from vectorai import ViClient
 # --- Logging Configuration ---
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
-# --- Custom Exceptions ---
-class TaskStorageError(Exception):
-    """Base exception for TaskStorage."""
-    pass
-
-class TaskNotFoundError(TaskStorageError):
-    """Raised when a task cannot be found."""
-    pass
 
 # --- Core Implementation ---
 class VectorAITaskStorage:
@@ -29,6 +19,8 @@ class VectorAITaskStorage:
         # Ensure collections exist
         self.client.get_or_create_collection("tasks")
         self.client.get_or_create_collection("completed_tasks")
+        self.client.get_or_create_collection("chapters")
+        self.client.get_or_create_collection("journal")
 
     def _connect_with_backoff(self, host, port):
         retries = 5
@@ -42,13 +34,13 @@ class VectorAITaskStorage:
                 logger.warning(f"Connection attempt {i+1} failed: {e}. Retrying in {backoff}s...")
                 time.sleep(backoff)
                 backoff *= 2
-        raise TaskStorageError("Failed to connect to VectorAI DB after multiple retries.")
+        raise Exception("Failed to connect to VectorAI DB after multiple retries.")
 
     def _embed_text(self, text: str) -> list[float]:
         vector = self.model.encode(text).tolist()
         # Dimension Validation
         if len(vector) != 384:
-            raise TaskStorageError(f"Embedding dimension mismatch: expected 384, got {len(vector)}")
+            raise ValueError(f"Embedding dimension mismatch: expected 384, got {len(vector)}")
         return vector
 
     def save_task(self, task: dict) -> str:
@@ -56,7 +48,7 @@ class VectorAITaskStorage:
         text = f"{task['title']} {task['description']}"
         vector = self._embed_text(text)
         
-        task_id = task.get("id") or str(hash(text)) # Simplistic ID generation
+        task_id = task.get("id") or str(uuid.uuid4())
         
         payload = {
             "id": task_id,
@@ -71,7 +63,7 @@ class VectorAITaskStorage:
         """Retrieves a task payload by task_id."""
         result = self.client.get_document("tasks", task_id)
         if not result:
-            raise TaskNotFoundError(f"Task {task_id} not found.")
+            raise KeyError(f"Task {task_id} not found.")
         return result
 
     def find_similar_tasks(self, title: str, description: str, limit: int) -> list[dict]:
@@ -85,11 +77,26 @@ class VectorAITaskStorage:
             vector=vector,
             limit=limit
         )
-        return results
+        
+        # Map raw results to required contract
+        formatted_results = []
+        for doc in results:
+            # Assuming SDK returns doc including metadata
+            formatted_results.append({
+                "task_id": doc.get("id"),
+                "damage_rating": doc.get("damage_rating"),
+                "similarity": doc.get("similarity")
+            })
+        return formatted_results
 
     def archive_completed(self, task_id: str) -> None:
-        """Moves task from 'tasks' to 'completed_tasks'."""
-        task = self.get_task(task_id)
+        """Moves task from 'tasks' to 'completed_tasks' (Idempotent)."""
+        try:
+            task = self.get_task(task_id)
+        except KeyError:
+            # Task not found in active, assume already archived or doesn't exist
+            return
+        
         # Add to completed
         self.client.upsert("completed_tasks", [task])
         # Remove from active
@@ -104,3 +111,27 @@ class VectorAITaskStorage:
             logger.warning(f"Capacity warning: {count} vectors stored in 'completed_tasks'. Approaching 5,000 threshold.")
         
         return count
+
+    def save_chapter(self, session_id: str, chapter_data: dict) -> None:
+        """Upsert chapter data keyed by session_id."""
+        chapter_data["id"] = session_id
+        self.client.upsert("chapters", [chapter_data])
+
+    def get_chapter(self, session_id: str) -> dict:
+        """Retrieve chapter data by session_id."""
+        result = self.client.get_document("chapters", session_id)
+        if not result:
+            raise KeyError(f"Chapter {session_id} not found.")
+        return result
+
+    def save_journal(self, journal_id: str, journal_data: dict) -> None:
+        """Upsert journal data keyed by journalId."""
+        journal_data["id"] = journal_id
+        self.client.upsert("journal", [journal_data])
+
+    def get_journal(self, journal_id: str) -> dict:
+        """Retrieve journal data by journalId."""
+        result = self.client.get_document("journal", journal_id)
+        if not result:
+            raise KeyError(f"Journal {journal_id} not found.")
+        return result
