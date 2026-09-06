@@ -1,0 +1,12 @@
+version: '3.8'
+services:
+  vectorai:
+    image: actian/vectorai:latest
+    container_name: vectorai_db
+    ports:
+      - "6574:6574" # SDK
+      - "6573:6573" # REST
+    volumes:
+      - ./local_data:/var/lib/actian-vectorai
+    # Note: On Linux/WSL, ensure the directory exists and permissions are set:
+    # mkdir -p ./local_data && sudo chown -R 999:999 ./local_data
