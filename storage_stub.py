@@ -23,6 +23,8 @@ class InMemoryTaskStorage:
     def __init__(self) -> None:
         self._tasks: dict[str, dict] = {}
         self._completed_ids: set[str] = set()
+        self._chapters: dict[str, dict] = {}
+        self._journal: dict[str, dict] = {}
 
     def save_task(self, task: dict) -> str:
         task_id = task.get("task_id") or str(uuid.uuid4())
@@ -71,3 +73,23 @@ class InMemoryTaskStorage:
 
     def count_vectors(self) -> int:
         return len(self._completed_ids)
+
+    def save_chapter(self, session_id: str, chapter_data: dict) -> None:
+        self._chapters[session_id] = chapter_data
+
+    def get_chapter(self, session_id: str) -> dict:
+        try:
+            return self._chapters[session_id]
+        except KeyError:
+            logger.warning("storage_stub: get_chapter miss session_id=%s", session_id)
+            raise
+
+    def save_journal(self, journal_id: str, journal_data: dict) -> None:
+        self._journal[journal_id] = journal_data
+
+    def get_journal(self, journal_id: str) -> dict:
+        try:
+            return self._journal[journal_id]
+        except KeyError:
+            logger.warning("storage_stub: get_journal miss journal_id=%s", journal_id)
+            raise
