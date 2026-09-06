@@ -1,26 +1,150 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
+@theme {
+  --font-novel: var(--font-cormorant), serif;
+  --font-display: var(--font-playfair), serif;
+  --font-hand: var(--font-kalam), cursive;
+
+  --color-ink-950: #07080d;
+  --color-ink-900: #0c0e16;
+  --color-ink-800: #141826;
+  --color-ink-700: #1e2335;
+  --color-ink-600: #2a3047;
+
+  --color-parchment: #e8e0c8;
+  --color-parchment-soft: #cfc5a6;
+  --color-parchment-dim: #8f8670;
+
+  --color-gold-200: #f0d9a0;
+  --color-gold-300: #e2bd6b;
+  --color-gold-400: #c9a227;
+  --color-gold-500: #97771b;
+  --color-gold-600: #6d5413;
+
+  --color-blood-300: #e2877f;
+  --color-blood-400: #c0504a;
+  --color-blood-500: #8e3734;
+
+  --color-moss-300: #a3c98a;
+  --color-moss-400: #6f9e5a;
+  --color-moss-500: #4d7040;
+
+  --color-frost-400: #7fa8c9;
+
+  --animate-caret: caret 1s steps(1) infinite;
+  --animate-flicker: flicker 3.2s ease-in-out infinite;
+  --animate-ember: ember 2s ease-in-out infinite;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+@keyframes caret {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+@keyframes flicker {
+  0%, 100% { opacity: 0.92; }
+  45% { opacity: 1; }
+  55% { opacity: 0.85; }
+  70% { opacity: 1; }
+}
+
+@keyframes ember {
+  0%, 100% { opacity: 0.55; transform: scale(0.98); }
+  50% { opacity: 1; transform: scale(1.02); }
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background-color: var(--color-ink-950);
+  color: var(--color-parchment);
+  font-family: var(--font-novel);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Deep-ink canvas with a candle's faint glow and a vignette. */
+.tome-bg {
+  background:
+    radial-gradient(ellipse 70% 45% at 50% -8%, rgba(201, 162, 39, 0.14), transparent 60%),
+    radial-gradient(ellipse 90% 70% at 50% 120%, rgba(30, 26, 56, 0.55), transparent 62%),
+    linear-gradient(180deg, var(--color-ink-950) 0%, var(--color-ink-900) 55%, var(--color-ink-950) 100%);
+}
+
+.tome-vignette::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(ellipse 120% 95% at 50% 50%, transparent 62%, rgba(4, 4, 9, 0.72) 100%);
+}
+
+/* Paper grain, very subtle. */
+.grain::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.035;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+::selection {
+  background: rgba(201, 162, 39, 0.35);
+  color: #fff8e6;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-gold-600) transparent;
+}
+
+.glowing-gold {
+  text-shadow: 0 0 24px rgba(201, 162, 39, 0.35), 0 1px 2px rgba(0, 0, 0, 0.8);
+}
+
+.mainuscript {
+  font-size: 1.125rem;
+  line-height: 1.85;
+}
+
+.drop-cap-letter {
+  float: left;
+  font-family: var(--font-display);
+  font-size: 4.2em;
+  line-height: 0.78;
+  padding-right: 0.12em;
+  padding-top: 0.05em;
+  color: var(--color-gold-300);
+  text-shadow: 0 0 20px rgba(201, 162, 39, 0.4);
+}
+
+.epigraph {
+  font-style: italic;
+  color: var(--color-parchment-dim);
+  font-family: var(--font-display);
+}
+
+.hand {
+  font-family: var(--font-hand);
+}
+
+.scene-edge {
+  color: var(--color-gold-500);
+}
+
+.hp-glow {
+  box-shadow: 0 0 14px rgba(201, 162, 39, 0.18), inset 0 0 10px rgba(201, 162, 39, 0.08);
+}
+
+.blade-line {
+  border-image: linear-gradient(90deg, transparent, var(--color-gold-500), transparent) 1;
+}
+
+.type-caret {
+  display: inline-block;
+  width: 0.55em;
+  height: 1.05em;
+  margin-left: 1px;
+  vertical-align: text-bottom;
+  background: var(--color-gold-300);
+  animation: var(--animate-caret);
+  box-shadow: 0 0 10px rgba(226, 189, 107, 0.7);
 }

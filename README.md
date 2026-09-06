@@ -1,36 +1,47 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# FocusForge — A Chronicle of Tiny Victories
 
-## Getting Started
+Life is an RPG — but it reads like a novel.
 
-First, run the development server:
+Most to-do apps reward you after you finish something.
+**FocusForge makes progress itself worth experiencing.** Your real task is conjured into a
+fantasy chapter; completing tiny quests rewrites the story live. No XP, no coins, no streaks —
+the narrative is the reward.
+
+## Run it (frontend — UI teammate)
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+npm install
+npm run dev        # → http://localhost:3000
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+- **No backend?** The app runs in *scroll-of-fate* mode (mock adapter + offline story engine) so
+  the golden demo path works end-to-end with zero services.
+- **Backend live?** Set `NEXT_PUBLIC_API_URL` (and Clerk keys) below and it talks to the realm.
+- Contract: everything the UI expects is in [`CONTRACT.md`](./CONTRACT.md) → next stop, the backend team.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Environment
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Copy `.env.local.example` to `.env.local`:
 
-## Learn More
+| Var | Purpose | Default |
+|---|---|---|
+| `NEXT_PUBLIC_API_URL` | Backend REST base URL | *(unset → mock mode)* |
+| `NEXT_PUBLIC_USE_MOCK` | `"1"` forces mock even with an API URL | `"0"` |
+| `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` | Clerk frontend key | *(unset → demo hero, no login)* |
+| `CLERK_SECRET_KEY` | Clerk backend key (used by backend teammate) | — |
 
-To learn more about Next.js, take a look at the following resources:
+### Backend / DB teammates (shared keys, not the UI's)
+`GEMINI_API_KEY`, `GEMINI_MODEL` (default `gemini-2.5-flash`), Actian NoSQL connection +
+`CLERK_SECRET_KEY` — all owned by the backend/DB team per `CONTRACT.md`.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## The golden demo path (what we demo)
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+> enter task → chapter conjured → story types itself → 4–6 tiny quests → strike → boss HP drops &
+> prose changes → the Goblin interrupts ONCE → A) legit detour xor B) exposed & return →
+> final quest → chapter closes → Journal entry.
 
-## Deploy on Vercel
+## Branch discipline (cmd #4)
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- UI works on the `feat/novel-ui` branch.
+- `main` only receives changes that merge green (`npm run build` passes).
+- Nobody edits another teammate's files. Contract changes → announce in the group first.
