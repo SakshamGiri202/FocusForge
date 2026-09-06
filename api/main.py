@@ -9,9 +9,11 @@ from __future__ import annotations
 import time
 from contextlib import asynccontextmanager
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
+from api.chapters import router as chapters_router
 from api.dependencies import get_state, get_storage
 from api.schemas import (
     BattleCreate,
@@ -47,6 +49,17 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.include_router(chapters_router)
+
+
+@app.exception_handler(HTTPException)
+async def contract_error_envelope(request: Request, exc: HTTPException) -> JSONResponse:
+    # CONTRACT.md's standard error envelope is {"error": {"code", "message"}}
+    # at the top level, not FastAPI's default {"detail": ...} wrapper.
+    if isinstance(exc.detail, dict) and "error" in exc.detail:
+        return JSONResponse(status_code=exc.status_code, content=exc.detail)
+    return JSONResponse(status_code=exc.status_code, content={"error": {"code": "ERROR", "message": str(exc.detail)}})
 
 
 def _battle_status(battle: BattleState, now: float) -> BattleStatusOut:
