@@ -7,8 +7,10 @@ storage_interface.
 from __future__ import annotations
 
 import time
+from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 
 from api.dependencies import get_state, get_storage
 from api.schemas import (
@@ -23,9 +25,28 @@ from api.schemas import (
 from api.state import AppState
 from game_engine import Mode, PlayerState, apply_damage, infer_damage_rating, new_battle
 from game_engine.models import BattleState
+from seed_data import seed
 from storage_interface import TaskStorage
 
-app = FastAPI(title="Focus Forge")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # only_if_empty=True: never re-seeds or clobbers an already-populated
+    # real DB, but guarantees the demo isn't hitting the cold-start
+    # default on every task when running against the fresh in-memory stub.
+    seed(get_storage())
+    yield
+
+
+app = FastAPI(title="Focus Forge", lifespan=lifespan)
+
+# Wide open for the hackathon: frontend runs on a different port/origin
+# and there's no auth yet. Tighten before this ever leaves the demo.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 def _battle_status(battle: BattleState, now: float) -> BattleStatusOut:
