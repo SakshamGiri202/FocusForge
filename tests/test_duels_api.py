@@ -36,3 +36,36 @@ def test_create_and_join_duel():
     joined = res_join.json()["match"]
     assert joined["status"] == "active"
     assert joined["sideB"]["heroName"] == "Fierce Rival"
+
+
+def test_striking_inside_a_duel_damages_the_opponent_not_self():
+    from api.main import app
+    client_ = TestClient(app)
+
+    created = client_.post(
+        "/api/duels",
+        json={"protagonist": "Summoner", "task": "Duel strike test task", "timeAvailable": "30 minutes"},
+    ).json()
+    match_id = created["match"]["matchId"]
+    join_code = created["match"]["joinCode"]
+    session_a = created["session"]
+
+    joined = client_.post(
+        f"/api/duels/{join_code}/join",
+        json={"protagonist": "Rival", "task": "Rival's task", "timeAvailable": "30 minutes"},
+    ).json()
+    session_b = joined["session"]
+
+    quest = session_a["quests"][0]
+    resp = client_.patch(f"/api/chapters/{session_a['sessionId']}/quests/{quest['id']}").json()
+
+    assert resp["goblin"] is None
+    assert resp["state"]["status"] == "battle"  # never chapterEnd/goblin from local boss math
+    assert "match" in resp
+    assert resp["match"]["damageDealtA"] == quest["damage"]  # A's strike hurts B
+    assert resp["match"]["damageDealtB"] == 0
+    assert resp["match"]["hpB"] < 100
+    assert resp["match"]["hpA"] == 100
+
+    match_snapshot = client_.get(f"/api/duels/{match_id}").json()
+    assert match_snapshot["damageDealtA"] == quest["damage"]
